@@ -1,0 +1,203 @@
+---
+- name: Install base requirements for the Yolonix Laptop
+  hosts: yolonix
+  become: no
+
+  vars:
+    srcdir: "{{ ansible_env.HOME }}/.src"
+    github_keys: https://github.com/pezhore.keys      # If you're not me, change this!
+
+  vars_files:
+    - ansible_vars_wg_server.yml    # Dynamically generated based on the wireguard playbook
+    - ../config.yml                 # Project-scoped config file (has peer details, etc)
+
+  tasks:
+    # We need to figure out what this yolonix system will be used for (see project README for more details)
+    - name: Slurp the keyid of this yolonix
+      ansible.builtin.slurp:
+        src: "{{ ansible_env.HOME }}/.keyid"
+      register: slurp
+    
+    - name: set our keyid fact
+      ansible.builtin.set_fact:
+        keyid: "{{ slurp['content'] | b64decode | trim}}"
+
+    - name: Do wireguard things
+      block:
+        - name: Ensure the wireguard directory exists
+          ansible.builtin.file:
+            path: /etc/wireguard
+            state: directory
+            owner: root
+            group: root
+            mode: 0700
+          become: yes
+        
+        - name: Create wg0.conf file
+          ansible.builtin.template:
+            dest: /etc/wireguard/wg0.conf
+            src: wg0_peers.conf.j2
+            owner: root
+            group: root
+            backup: yes
+          become: yes
+          
+        - name: Create pubkey and privkey files from Vault
+          ansible.builtin.copy:
+            dest: "{{ item.dest }}"
+            content: "{{ item.content }}"
+            owner: root
+            group: root
+            mode: 0600
+            backup: yes
+          become: yes
+          with_items:
+            - { dest: /etc/wireguard/private.key, content: "{{ lookup('hashi_vault', 'secret=homelab/data/services/wireguard/privkeys:'+keyid) }}" }
+            - { dest: /etc/wireguard/public.key, content: "{{ lookup('hashi_vault', 'secret=homelab/data/services/wireguard/pubkeys:'+keyid) }}" }
+
+        - name: Disable ipv6 with sysctl
+          ansible.posix.sysctl:
+            name: "{{ item.name }}"
+            value: "{{ item.value }}"
+            state: present
+            reload: yes
+          with_items:
+            - { name: net.ipv6.conf.all.disable_ipv6, value: 1 }
+            - { name: net.ipv6.conf.default.disable_ipv6, value: 1 }
+            - { name: net.ipv6.conf.lo.disable_ipv6, value: 1 }
+          become: yes
+
+    - name: ensure known hosts has correct key
+      ansible.builtin.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ github_keys }}"
+        exclusive: yes
+        state: present
+
+    - name: Ensure default packages are installed
+      community.general.pacman:
+        name:
+          - terraform             # Get some Hashicorp tooling
+          - packer
+          - vault
+          - vagrant
+          - virtualbox
+          - virtualbox-host-modules-arch
+          - podman                # CONTAINER SHIT GO!
+          - fuse-overlayfs
+          - slirp4netns
+          - fortune-mod
+          - expect
+          - stow
+          - libfido2              # Yubikey stuff
+          - opensc
+          - yubikey-personalization
+          - ccid
+          - pcsc-tools
+          - xclip
+          - dnsutils
+          - cowsay
+          - tmux
+          - base-devel
+          - glibc
+          - gcc-libs
+          - linux-headers
+          - libarchive
+          - zlib
+          - git
+          - jq
+          - zsh
+          - tlp                   # Make laptop not suck battery so much
+          - expect
+          - ufw
+          - net-tools
+          - openresolv
+          - obsidian
+          - flatpak
+          - fwupd
+          - globalprotect-openconnect #VPN stuff
+          - wireguard-tools
+        state: present
+      become: yes
+
+    - name: Clone yay
+      ansible.builtin.git:
+        repo: https://aur.archlinux.org/yay-bin.git
+        dest: "{{ srcdir }}/yay"
+        update: true
+
+    # This currently doesn't work... and so we can't also do the following:
+    # - yay -S visual-studio-code-bin
+    # - yay -S tlpui
+
+    # - name: Build and install yay
+    #   ansible.builtin.command:
+    #     chdir: "{{ srcdir }}/yay"
+    #     cmd: "makepkg -sfi --noconfirm"
+    #     creates: /usr/bin/yay
+
+    - name: Enable and start various services
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+      with_items:
+        - pcscd
+        - tlp
+      become: yes
+
+    - name: Install Code Extensions
+      ansible.builtin.command:
+        cmd: "code --install-extension {{ item }}"
+      with_items:
+        - 4ops.packer
+        - coolbear.systemd-unit-file
+        - GitHub.copilot
+        - mechatroner.rainbow-csv
+        - mohsen1.prettify-json
+        - shd101wyy.markdown-preview-enhanced
+        - streetsidesoftware.code-spell-checker
+        - tsandall.opa
+        - golang.go
+        - hashicorp.terraform
+
+    - name: Ensure subuid and subgid files are populated with the deck user
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: |
+          {{ ansible_user }}:100000:65536
+      with_items:
+      - /etc/subuid
+      - /etc/subgid
+      become: yes
+
+    - name: Clone down the dotfiles
+      ansible.builtin.git:
+        repo: https://github.com/pezhore/dotfiles.git
+        dest: "{{ ansible_env.HOME }}/.src/dotfiles"
+
+    - name: Create necessary directories for things
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+      with_items:
+        - "{{ ansible_env.HOME}}/.local"
+        - "{{ ansible_env.HOME}}/.local/bin"
+        - "{{ ansible_env.HOME}}/code"
+
+    - name: Set our ansible user's shell to zsh
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        shell: /usr/bin/zsh
+      become: yes
+    
+    - name: Copy util scripts for yubikey decrypt/encrypt
+      ansible.builtin.copy:
+        dest: "{{ ansible_env.HOME }}/.local/bin/{{ item }}"
+        src: "{{ item }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: 0755
+      with_items:
+        - decrypt-td
+        - encrypt-td
