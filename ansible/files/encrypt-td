@@ -1,0 +1,6 @@
+#!/bin/bash
+set -e
+sudo umount /mnt/td
+sudo cryptsetup luksClose /dev/mapper/reddrive
+
+echo "Thumbdrive encrypted... remove at your leisure"

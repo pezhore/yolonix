@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+sudo ykfde-open -d /dev/sdc1 -n reddrive
+sudo mount /dev/mapper/reddrive /mnt/td
+
+echo ""
+echo "      ______________"
+echo "     |[]            |"
+echo "     |  __________  |"
+echo "     |  | Disk   |  |"
+echo "     |  | Ready  |  |"
+echo "     |  |________|  |"
+echo "     |   ________   |"
+echo "     |   [ [ ]  ]   |"
+echo "     \___[_[_]__]___|"
+echo ""
+echo "Your content is at /mnt/td"
