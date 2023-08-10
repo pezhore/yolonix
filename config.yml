@@ -1,0 +1,18 @@
+peers:
+  - name: Conference OS
+    keyid: conference
+    allowed_ips: 172.16.255.2/32
+  - name: Airport OS
+    keyid: airport
+    allowed_ips: 172.16.255.3/32
+  - name: Graphene
+    keyid: graphene
+    allowed_ips: 172.16.255.4/32
+wg_server:
+  gw_cidr: 24
+  gw_address: 172.16.255.1
+  listen_port: 51820
+  image: ubuntu-22-04-x64
+  dns: vpn.pezlab.dev
+  region: nyc1
+  size: s-1vcpu-1gb
